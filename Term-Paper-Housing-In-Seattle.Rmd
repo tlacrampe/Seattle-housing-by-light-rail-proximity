@@ -1,0 +1,72 @@
+---
+title: "Seattle Housing Prices and Access to the Light Rail"
+author: "Abigail Edelmen, Ahmed Almotaileq, Christopher Lacrampe"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: 
+  html_document:
+    code_folding: hide
+    highlight: tango
+    theme: yeti
+    toc: yes
+---
+
+#### Importing the Libraries
+
+```{r, message = FALSE, warning = FALSE}
+rm(list=ls(all=TRUE)) # clears working environment
+library('tidyverse')  # bundle of packages useful for datamanipulation and organization
+library('stargazer')  # package useful in outputting results of statistical models
+library('knitr')      # package useful for formatting markdown files to html
+library('lmtest')     # has functions for BP Test
+library('sandwich')   # has functions for White TestT
+library('geosphere')  # has functions for location manipulaton
+```
+
+The data for this project was collected from [Redfin](https://www.redfin.com/city/16163/WA/Seattle) and [Seattle.gov](https://data.seattle.gov/Community/Light-Rail-Map/5f4s-t4jf/data) on February 20th, 2018. These series include...
+ 
+#### Importing and Cleaning the Dataset
+
+```{r}
+redfinDat <- read.csv("redfin_2018-02-20-12-58-37_Seattle.csv")
+lightRailDat <- read.csv("Light_Rail_Map.csv", stringsAsFactors = FALSE)
+
+# Removing uneeded colums
+redfinDat <- subset(redfinDat, select = -c(SOLD.DATE,NEXT.OPEN.HOUSE.START.TIME,NEXT.OPEN.HOUSE.END.TIME, URL..SEE.http...www.redfin.com.buy.a.home.comparative.market.analysis.FOR.INFO.ON.PRICING., SOURCE, MLS.,FAVORITE, INTERESTED))
+
+# Adds UW light rail station
+uwStation <- list(FEATUREITEM_ID = NA, City.Feature = "Light Rail", Common.Name = as.factor("UW Station"), Address = NA, Website = NA, Longitude = -122.3038, Latitude = 47.6498, Location = "(47.6498, 122.3038)")
+lightRailDat = rbind(lightRailDat, uwStation, stringsAsFactors=FALSE)
+```
+
+##### Calculate the distance from the property location to the nearest light rail station using the following code:
+###### Special thanks to stack overflow user eclark. See his response to a simmilair query from  [this](https://stackoverflow.com/questions/31732281/finding-minimum-distance-between-two-sets-of-points-in-two-sets-of-r) thread.
+
+```{r, warning = FALSE, results = "hide"}
+# Preparing lat/lon databases for function
+redfinCoords <- data.frame(location_id=redfinDat$ADDRESS,LATITUDE=redfinDat$LATITUDE,LONGITUDE=redfinDat$LONGITUDE)
+lightRailCoords <- data.frame(location_id=lightRailDat$Common.Name,LATITUDE=lightRailDat$Latitude,LONGITUDE=lightRailDat$Longitude)
+
+# Setting up DistFun to find distance from property to closes lightrail station
+
+DistFun <- function(ID){
+ TMP <- redfinCoords[redfinCoords$location_id==ID,]
+ TMP1 <- distGeo(TMP[,3:2],lightRailCoords[,3:2]) # uses distGeo() function from geosphere package to calculate dist from lat and lon
+ TMP2 <- data.frame(redfinCoordsID=ID,lightRailCoordsID=lightRailCoords[which.min(TMP1),1],DistanceBetween=min(TMP1)) 
+ print(ID)
+ return(TMP2)
+}
+
+# Distance output of DistFun parameters as redfinCoords$location_id, output is in meters
+DistanceMatrix <- rbind_all(lapply(redfinCoords$location_id, DistFun))
+
+# Taking distance variable and adding to original redfinDat dataframe
+redfinDat$distance <- DistanceMatrix$DistanceBetween # values are in meters
+
+# Converting distance to miles
+redfinDat$distance <- redfinDat$distance*0.000621371 # num is rate of meters per mile
+
+# Adding the lightRail station variable
+redfinDat$station <- DistanceMatrix$lightRailCoordsID
+```
+
+
