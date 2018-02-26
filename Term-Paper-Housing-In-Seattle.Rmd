@@ -1,6 +1,6 @@
 ---
-title: "Seattle Housing Prices and Access to the Light Rail"
-author: "Abigail Edelmen, Ahmed Almotaileq, Christopher Lacrampe"
+title: "Seattle Housing Prices: Assesing the effects of acessibility to public goods"
+author: "Ahmed Almotaileq, Abigail Edelmen, Christopher Lacrampe"
 date: "`r format(Sys.time(), '%B %d, %Y')`"
 output: 
   html_document:
@@ -8,9 +8,10 @@ output:
     highlight: tango
     theme: yeti
     toc: yes
+    toc_float: true
 ---
 
-#### Importing the Libraries
+### Importing the Libraries
 
 ```{r, message = FALSE, warning = FALSE}
 rm(list=ls(all=TRUE)) # clears working environment
@@ -22,13 +23,24 @@ library('sandwich')   # has functions for White TestT
 library('geosphere')  # has functions for location manipulaton
 ```
 
-The data for this project was collected from [Redfin](https://www.redfin.com/city/16163/WA/Seattle) and [Seattle.gov](https://data.seattle.gov/Community/Light-Rail-Map/5f4s-t4jf/data) on February 20th, 2018. These series include...
+The data for this project was collected from: 
+
+1. Housing data: [Redfin](https://www.redfin.com/city/16163/WA/Seattle) on February 20th, 2018
+
+2. Public goods' locations filtered from [Seattle.gov's](https://data.seattle.gov/Community/My-Neighborhood-Map/82su-5fxf/data) "My Neighborhood Map" collection.
+    + Light rail data:   [Seattle.gov](https://data.seattle.gov/Community/Light-Rail-Map/5f4s-t4jf/data) on February 20th, 2018
+    + Public parks data: [Seattle.gov](https://data.seattle.gov/Community/Parks-Map/rbbt-rarz) on February 23, 2018.
+    + Public schools data: [Seattle.gov](https://data.seattle.gov/Community/Schools-Map/2tje-83f6) on February 23, 2018.
+    + Public hospital data: [Seattle.gov](https://data.seattle.gov/Community/Hospitals/khp7-mz6q) on February 23, 2018.
  
-#### Importing and Cleaning the Dataset
+### Importing and Cleaning the Data
 
 ```{r}
 redfinDat <- read.csv("redfin_2018-02-20-12-58-37_Seattle.csv")
 lightRailDat <- read.csv("Light_Rail_Map.csv", stringsAsFactors = FALSE)
+publicParkDat <- read.csv("Parks_Map.csv", stringsAsFactors = FALSE)
+publicSchoolDat <- read.csv("Schools_Map.csv", stringsAsFactors = FALSE)
+publicHospitalDat <- read.csv("Hospitals.csv", stringsAsFactors = FALSE)
 
 # Removing uneeded colums
 redfinDat <- subset(redfinDat, select = -c(SOLD.DATE,NEXT.OPEN.HOUSE.START.TIME,NEXT.OPEN.HOUSE.END.TIME, URL..SEE.http...www.redfin.com.buy.a.home.comparative.market.analysis.FOR.INFO.ON.PRICING., SOURCE, MLS.,FAVORITE, INTERESTED))
@@ -38,35 +50,120 @@ uwStation <- list(FEATUREITEM_ID = NA, City.Feature = "Light Rail", Common.Name 
 lightRailDat = rbind(lightRailDat, uwStation, stringsAsFactors=FALSE)
 ```
 
-##### Calculate the distance from the property location to the nearest light rail station using the following code:
-###### Special thanks to stack overflow user eclark. See his response to a simmilair query from  [this](https://stackoverflow.com/questions/31732281/finding-minimum-distance-between-two-sets-of-points-in-two-sets-of-r) thread.
+##### Special thanks to stack overflow user eclark for providing the framework for the functions used to calculate minimum distances. See his response to a simmilair query from  [this stackoverflow thread.](https://stackoverflow.com/questions/31732281/finding-minimum-distance-between-two-sets-of-points-in-two-sets-of-r)
+#### Calculate the distance from the property location to the nearest light rail station using the following code:
 
 ```{r, warning = FALSE, results = "hide"}
-# Preparing lat/lon databases for function
+# Preparing lat/lon dataframes for function
 redfinCoords <- data.frame(location_id=redfinDat$ADDRESS,LATITUDE=redfinDat$LATITUDE,LONGITUDE=redfinDat$LONGITUDE)
 lightRailCoords <- data.frame(location_id=lightRailDat$Common.Name,LATITUDE=lightRailDat$Latitude,LONGITUDE=lightRailDat$Longitude)
 
-# Setting up DistFun to find distance from property to closes lightrail station
+# Setting up DistLinkFun to find distance from property to closest lightrail station
 
-DistFun <- function(ID){
+DistLinkFun <- function(ID){
  TMP <- redfinCoords[redfinCoords$location_id==ID,]
  TMP1 <- distGeo(TMP[,3:2],lightRailCoords[,3:2]) # uses distGeo() function from geosphere package to calculate dist from lat and lon
- TMP2 <- data.frame(redfinCoordsID=ID,lightRailCoordsID=lightRailCoords[which.min(TMP1),1],DistanceBetween=min(TMP1)) 
+ TMP2 <- data.frame(redfinCoordsID=ID,lightRailCoordsID=lightRailCoords[which.min(TMP1),1],distanceToLink=min(TMP1)) 
+ print(ID)
+ return(TMP2)
+}
+
+# Distance output of DistLinkFun parameters as redfinCoords$location_id, output is in meters
+DistanceLinkMatrix <- rbind_all(lapply(redfinCoords$location_id, DistLinkFun))
+
+# Taking distance variable and adding to original redfinDat dataframe
+redfinDat$distanceToLink <- DistanceLinkMatrix$distanceToLink # values are in meters
+
+# Converting distance to miles
+redfinDat$distanceToLink <- redfinDat$distanceToLink*0.000621371 # num is rate of meters per mile
+
+# Adding the closest lightRail station variable to redfinDat
+redfinDat$ClosestStation <- DistanceLinkMatrix$lightRailCoordsID
+```
+
+#### Calculate the distance from the property location to the nearest public park using the following code:
+
+```{r, warning = FALSE, results = "hide"}
+# preparing lat/lon dataframe for function
+publicParkCoords <- data.frame(location_id=publicParkDat$Common.Name,LATITUDE=publicParkDat$Latitude,LONGITUDE=publicParkDat$Longitude)
+
+# Setting up DistParkFun to find distance from property to closest public park
+
+DistParkFun <- function(ID){
+ TMP <- redfinCoords[redfinCoords$location_id==ID,]
+ TMP1 <- distGeo(TMP[,3:2],publicParkCoords[,3:2]) # uses distGeo() function from geosphere package to calculate dist from lat and lon
+ TMP2 <- data.frame(redfinCoordsID=ID,publicParkCoordsID=publicParkCoords[which.min(TMP1),1],distanceToPark=min(TMP1)) 
  print(ID)
  return(TMP2)
 }
 
 # Distance output of DistFun parameters as redfinCoords$location_id, output is in meters
-DistanceMatrix <- rbind_all(lapply(redfinCoords$location_id, DistFun))
+DistanceParkMatrix <- rbind_all(lapply(redfinCoords$location_id, DistParkFun))
 
 # Taking distance variable and adding to original redfinDat dataframe
-redfinDat$distance <- DistanceMatrix$DistanceBetween # values are in meters
+redfinDat$distanceToPark <- DistanceParkMatrix$distanceToPark # values are in meters
 
 # Converting distance to miles
-redfinDat$distance <- redfinDat$distance*0.000621371 # num is rate of meters per mile
+redfinDat$distanceToPark <- redfinDat$distanceToPark*0.000621371 # num is rate of meters per mile
 
-# Adding the lightRail station variable
-redfinDat$station <- DistanceMatrix$lightRailCoordsID
+# Adding the public park name variable to redfinDat
+redfinDat$ClosestPark <- DistanceParkMatrix$publicParkCoordsID
 ```
 
+#### Calculate the distance from the property location to the nearest public school using the following code:
 
+```{r, warning = FALSE, results = "hide"}
+# preparing lat/lon dataframe for function
+publicSchoolCoords <- data.frame(location_id=publicSchoolDat$Common.Name,LATITUDE=publicSchoolDat$Latitude,LONGITUDE=publicSchoolDat$Longitude)
+
+# Setting up DistSchoolFun to find distance from property to closest public school
+
+DistSchoolFun <- function(ID){
+ TMP <- redfinCoords[redfinCoords$location_id==ID,]
+ TMP1 <- distGeo(TMP[,3:2],publicSchoolCoords[,3:2]) # uses distGeo() function from geosphere package to calculate dist from lat and lon
+ TMP2 <- data.frame(redfinCoordsID=ID,publicSchoolCoordsID=publicSchoolCoords[which.min(TMP1),1],distanceToSchool=min(TMP1)) 
+ print(ID)
+ return(TMP2)
+}
+
+# Distance output of DistFun parameters as redfinCoords$location_id, output is in meters
+DistanceSchoolMatrix <- rbind_all(lapply(redfinCoords$location_id, DistSchoolFun))
+
+# Taking distance variable and adding to original redfinDat dataframe
+redfinDat$distanceToSchool <- DistanceSchoolMatrix$distanceToSchool # values are in meters
+
+# Converting distance to miles
+redfinDat$distanceToSchool <- redfinDat$distanceToSchool*0.000621371 # num is rate of meters per mile
+
+# Adding the school name variable to redfinDat
+redfinDat$ClosestSchool <- DistanceSchoolMatrix$publicSchoolCoordsID
+```
+
+#### Calculate the distance from the property location to the nearest public hospital using the following code:
+
+```{r, warning = FALSE, results = "hide"}
+# preparing lat/lon dataframe for function
+publicHospitalCoords <- data.frame(location_id=publicHospitalDat$Common.Name,LATITUDE=publicHospitalDat$Latitude,LONGITUDE=publicHospitalDat$Longitude)
+
+# Setting up DistHopsitalFun to find distance from property to closest public hospital
+
+DistHospitalFun <- function(ID){
+ TMP <- redfinCoords[redfinCoords$location_id==ID,]
+ TMP1 <- distGeo(TMP[,3:2],publicHospitalCoords[,3:2]) # uses distGeo() function from geosphere package to calculate dist from lat and lon
+ TMP2 <- data.frame(redfinCoordsID=ID,publicHospitalCoordsID=publicHospitalCoords[which.min(TMP1),1],distanceToHospital=min(TMP1)) 
+ print(ID)
+ return(TMP2)
+}
+
+# Distance output of DistFun parameters as redfinCoords$location_id, output is in meters
+DistanceHospitalMatrix <- rbind_all(lapply(redfinCoords$location_id, DistHospitalFun))
+
+# Taking distance variable and adding to original redfinDat dataframe
+redfinDat$distanceToHospital <- DistanceHospitalMatrix$distanceToHospital # values are in meters
+
+# Converting distance to miles
+redfinDat$distanceToHospital <- redfinDat$distanceToHospital*0.000621371 # num is rate of meters per mile
+
+# Adding the hospital name variable to redfinDat
+redfinDat$ClosestHospital <- DistanceHospitalMatrix$publicHospitalCoordsID
+```
