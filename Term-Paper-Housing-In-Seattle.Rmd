@@ -8,10 +8,11 @@ output:
     highlight: tango
     theme: yeti
     toc: yes
-    toc_float: true
 ---
 
-### Importing the Libraries
+***
+
+#### Importing the Libraries
 
 ```{r, message = FALSE, warning = FALSE}
 rm(list=ls(all=TRUE)) # clears working environment
@@ -32,8 +33,8 @@ The data for this project was collected from:
     + Public parks data: [Seattle.gov](https://data.seattle.gov/Community/Parks-Map/rbbt-rarz) on February 23, 2018.
     + Public schools data: [Seattle.gov](https://data.seattle.gov/Community/Schools-Map/2tje-83f6) on February 23, 2018.
     + Public hospital data: [Seattle.gov](https://data.seattle.gov/Community/Hospitals/khp7-mz6q) on February 23, 2018.
- 
-### Importing and Cleaning the Data
+
+#### Importing and Cleaning the Data
 
 ```{r}
 redfinDat <- read.csv("redfin_2018-02-20-12-58-37_Seattle.csv")
@@ -50,8 +51,19 @@ uwStation <- list(FEATUREITEM_ID = NA, City.Feature = "Light Rail", Common.Name 
 lightRailDat = rbind(lightRailDat, uwStation, stringsAsFactors=FALSE)
 ```
 
+***
+
 ##### Special thanks to stack overflow user eclark for providing the framework for the functions used to calculate minimum distances. See his response to a simmilair query from  [this stackoverflow thread.](https://stackoverflow.com/questions/31732281/finding-minimum-distance-between-two-sets-of-points-in-two-sets-of-r)
-#### Calculate the distance from the property location to the nearest light rail station using the following code:
+
+#### Calculate the distance from the property location to the nearest light rail station, public park, public school, and public hospital using the following code chunks and minimizing the results from solving [Vincenty's Inverse Problem](https://en.wikipedia.org/wiki/Vincenty%27s_formulae):
+
+More specificaly, minimizing the results for s where:
+
+$\begin{aligned}
+s = bA(\sigma - \Delta \sigma)
+\end{aligned}$
+
+and s is measured in meters, and accurate to 0.06mm.
 
 ```{r, warning = FALSE, results = "hide"}
 # Preparing lat/lon dataframes for function
@@ -74,14 +86,9 @@ DistanceLinkMatrix <- rbind_all(lapply(redfinCoords$location_id, DistLinkFun))
 # Taking distance variable and adding to original redfinDat dataframe
 redfinDat$distanceToLink <- DistanceLinkMatrix$distanceToLink # values are in meters
 
-# Converting distance to miles
-redfinDat$distanceToLink <- redfinDat$distanceToLink*0.000621371 # num is rate of meters per mile
-
 # Adding the closest lightRail station variable to redfinDat
 redfinDat$ClosestStation <- DistanceLinkMatrix$lightRailCoordsID
 ```
-
-#### Calculate the distance from the property location to the nearest public park using the following code:
 
 ```{r, warning = FALSE, results = "hide"}
 # preparing lat/lon dataframe for function
@@ -103,14 +110,9 @@ DistanceParkMatrix <- rbind_all(lapply(redfinCoords$location_id, DistParkFun))
 # Taking distance variable and adding to original redfinDat dataframe
 redfinDat$distanceToPark <- DistanceParkMatrix$distanceToPark # values are in meters
 
-# Converting distance to miles
-redfinDat$distanceToPark <- redfinDat$distanceToPark*0.000621371 # num is rate of meters per mile
-
 # Adding the public park name variable to redfinDat
 redfinDat$ClosestPark <- DistanceParkMatrix$publicParkCoordsID
 ```
-
-#### Calculate the distance from the property location to the nearest public school using the following code:
 
 ```{r, warning = FALSE, results = "hide"}
 # preparing lat/lon dataframe for function
@@ -132,14 +134,9 @@ DistanceSchoolMatrix <- rbind_all(lapply(redfinCoords$location_id, DistSchoolFun
 # Taking distance variable and adding to original redfinDat dataframe
 redfinDat$distanceToSchool <- DistanceSchoolMatrix$distanceToSchool # values are in meters
 
-# Converting distance to miles
-redfinDat$distanceToSchool <- redfinDat$distanceToSchool*0.000621371 # num is rate of meters per mile
-
 # Adding the school name variable to redfinDat
 redfinDat$ClosestSchool <- DistanceSchoolMatrix$publicSchoolCoordsID
 ```
-
-#### Calculate the distance from the property location to the nearest public hospital using the following code:
 
 ```{r, warning = FALSE, results = "hide"}
 # preparing lat/lon dataframe for function
@@ -161,9 +158,38 @@ DistanceHospitalMatrix <- rbind_all(lapply(redfinCoords$location_id, DistHospita
 # Taking distance variable and adding to original redfinDat dataframe
 redfinDat$distanceToHospital <- DistanceHospitalMatrix$distanceToHospital # values are in meters
 
-# Converting distance to miles
-redfinDat$distanceToHospital <- redfinDat$distanceToHospital*0.000621371 # num is rate of meters per mile
-
 # Adding the hospital name variable to redfinDat
 redfinDat$ClosestHospital <- DistanceHospitalMatrix$publicHospitalCoordsID
 ```
+
+***
+
+#### Preparing and outputting the models
+
+```{r, results = "asis"}
+mod1 <- lm(log(PRICE) ~ BEDS + BATHS + PROPERTY.TYPE + SQUARE.FEET + LOT.SIZE + YEAR.BUILT, data = redfinDat) # base model w/out the effects of distance to nearest public good
+mod2 <- lm(log(PRICE) ~ BEDS + BATHS + PROPERTY.TYPE + SQUARE.FEET + LOT.SIZE + YEAR.BUILT + distanceToPark + distanceToSchool + distanceToHospital, data = redfinDat) # base model including public goods (excluding light rail station, allows for asessing if inclusion of light station is significant)
+mod3 <- lm(log(PRICE) ~ BEDS + BATHS + PROPERTY.TYPE + SQUARE.FEET + LOT.SIZE + YEAR.BUILT + distanceToPark + distanceToSchool + distanceToHospital + distanceToLink, data = redfinDat) # model including distance to light rail station
+
+# start creating models with interaction dummies to assess impact of distance thresholds
+redfinDat$inter1 <- ifelse(redfinDat$distanceToLink <= 500, 1, 0) # threshold at 500 meters
+redfinDat$inter1 <- as.factor(redfinDat$inter1)
+mod4 <- lm(log(PRICE) ~ BEDS + BATHS + PROPERTY.TYPE + SQUARE.FEET + LOT.SIZE + YEAR.BUILT + distanceToPark + distanceToSchool + distanceToHospital + distanceToLink + distanceToLink*inter1, data = redfinDat)
+
+redfinDat$inter2 <- ifelse(redfinDat$distanceToLink <= 1000, 1, 0) # threshold at 1000 meters
+redfinDat$inter2 <- as.factor(redfinDat$inter2)
+mod5 <- lm(log(PRICE) ~ BEDS + BATHS + PROPERTY.TYPE + SQUARE.FEET + LOT.SIZE + YEAR.BUILT + distanceToPark + distanceToSchool + distanceToHospital + distanceToLink + distanceToLink*inter2, data = redfinDat)
+
+redfinDat$inter3 <- ifelse(redfinDat$distanceToLink <= 1500, 1, 0) # threshold at 1500 meters
+redfinDat$inter3 <- as.factor(redfinDat$inter3)
+mod6 <- lm(log(PRICE) ~ BEDS + BATHS + PROPERTY.TYPE + SQUARE.FEET + LOT.SIZE + YEAR.BUILT + distanceToPark + distanceToSchool + distanceToHospital + distanceToLink + distanceToLink*inter3, data = redfinDat)
+
+stargazer(redfinDat, type = "html")
+
+stargazer(mod1,mod2,mod3,mod4,mod5,mod6, type = "html",
+          covariate.labels = c("No. of bedrooms", "No. of bathrooms", "Mobile/Manufactured Home", "Multi-Family(2-4 unit)", "Multi-Family(5+ unit)", "Other Property Type", "Single Family, Residential", "Townhouse", "Square Feet of property", "Lot Size (sqr feet)", "Year built", "Distance to nearest public green space (meters)", "Distance to nearest school (meters)", "Distance to nearest hospital (meters", "distance to nearest station (meters)", "D500", "Distance to nearest station interacted with D500", "D1000", "Distance to nearest station interacted with D1000", "D1500", "Distance to nearest station interacted with D1500"),
+          column.labels = c("Model 1", "Model 2", "Model 3", "Model 4", "Model 5", "Model 6"),
+          dep.var.labels.include = FALSE,
+          dep.var.caption = "log(Price)")
+```
+
