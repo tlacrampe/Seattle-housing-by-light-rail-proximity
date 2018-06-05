@@ -1,18 +1,29 @@
 ---
 title: "Seattle Housing Prices: Assesing the effects of acessibility to public goods"
-author: "Ahmed Almotaileq, Abigail Edelmen, Christopher Lacrampe"
+author: "Ahmed Almotaileq, Abigail Edelman, Christopher Lacrampe"
 date: "`r format(Sys.time(), '%B %d, %Y')`"
 output: 
   html_document:
     code_folding: hide
     highlight: tango
     theme: yeti
-    toc: yes
+    toc: true
+    toc_float: true
+    
+editor_options: 
+  chunk_output_type: console
 ---
+***
+
+### **Research goals and question**:
+
+The aim of this project is to ascertain the effects of access to public goods on housing prices for the Seattle area. A more specific question is selected, assessing the impact of the distance to light rail stations, as public policy has recently pushed for further development of such stations for the areas East of the Seattle area, and homeowners may be interested in seeing if their property values will be effected by the newly constructed stations.
+
+Given the constraints of the available data (only recently listed properties), we can only extrapolate the effects in the long run (we are unable to asses the immediate impact of light rail construction on East side homes). Furthermore, this extrapolation is also contingent upon the assumption that the characteristics of property-seekers on the East side are analogous to those of property-seekers in Seattle.
 
 ***
 
-#### Importing the Libraries
+### Importing the Libraries
 
 ```{r, message = FALSE, warning = FALSE}
 rm(list=ls(all=TRUE)) # clears working environment
@@ -22,6 +33,7 @@ library('knitr')      # package useful for formatting markdown files to html
 library('lmtest')     # has functions for BP Test
 library('sandwich')   # has functions for White TestT
 library('geosphere')  # has functions for location manipulaton
+library('kableExtra') # has functions for formating tables
 ```
 
 The data for this project was collected from: 
@@ -34,7 +46,7 @@ The data for this project was collected from:
     + Public schools data: [Seattle.gov](https://data.seattle.gov/Community/Schools-Map/2tje-83f6) on February 23, 2018.
     + Public hospital data: [Seattle.gov](https://data.seattle.gov/Community/Hospitals/khp7-mz6q) on February 23, 2018.
 
-#### Importing and Cleaning the Data
+### Importing and Cleaning the Data
 
 ```{r}
 redfinDat <- read.csv("redfin_2018-02-20-12-58-37_Seattle.csv")
@@ -44,26 +56,37 @@ publicSchoolDat <- read.csv("Schools_Map.csv", stringsAsFactors = FALSE)
 publicHospitalDat <- read.csv("Hospitals.csv", stringsAsFactors = FALSE)
 
 # Removing uneeded colums
-redfinDat <- subset(redfinDat, select = -c(SOLD.DATE,NEXT.OPEN.HOUSE.START.TIME,NEXT.OPEN.HOUSE.END.TIME, URL..SEE.http...www.redfin.com.buy.a.home.comparative.market.analysis.FOR.INFO.ON.PRICING., SOURCE, MLS.,FAVORITE, INTERESTED))
+redfinDat <- subset(redfinDat, select = -c(SALE.TYPE,X..SQUARE.FEET, ZIP, DAYS.ON.MARKET, HOA.MONTH,SOLD.DATE,NEXT.OPEN.HOUSE.START.TIME,NEXT.OPEN.HOUSE.END.TIME, URL..SEE.http...www.redfin.com.buy.a.home.comparative.market.analysis.FOR.INFO.ON.PRICING., SOURCE, MLS.,FAVORITE, INTERESTED))
+
+# Filtering out observations with missing values
+redfinDat <- na.omit(redfinDat)
+
 
 # Adds UW light rail station
 uwStation <- list(FEATUREITEM_ID = NA, City.Feature = "Light Rail", Common.Name = as.factor("UW Station"), Address = NA, Website = NA, Longitude = -122.3038, Latitude = 47.6498, Location = "(47.6498, 122.3038)")
 lightRailDat = rbind(lightRailDat, uwStation, stringsAsFactors=FALSE)
+
+# Converts year built into a more representative variable, "Age"
+
+redfinDat$AGE = 2018 - redfinDat$YEAR.BUILT # Note, some listings are not built yet so willhave negative age
+
+# Filtering out uneeded variables and specific categories
+redfinDat <- redfinDat %>% 
+  filter(PROPERTY.TYPE %in% c("Multi-Family (2-4 Unit)", "Multi-Family (5+ Unit)", "Single Family Residential", "Townhouse")) %>% 
+  filter(PRICE < 3000000) 
+
 ```
 
 ***
 
-##### Special thanks to stack overflow user eclark for providing the framework for the functions used to calculate minimum distances. See his response to a simmilair query from  [this stackoverflow thread.](https://stackoverflow.com/questions/31732281/finding-minimum-distance-between-two-sets-of-points-in-two-sets-of-r)
+#### Special thanks to stack overflow user eclark for providing the framework for the functions used to calculate minimum distances. See his response to a simmilair query from  [this stackoverflow thread.](https://stackoverflow.com/questions/31732281/finding-minimum-distance-between-two-sets-of-points-in-two-sets-of-r)
 
-#### Calculate the distance from the property location to the nearest light rail station, public park, public school, and public hospital using the following code chunks and minimizing the results from solving [Vincenty's Inverse Problem](https://en.wikipedia.org/wiki/Vincenty%27s_formulae):
+### Calculateing the distance 
+#### from the property location to the nearest light rail station, public park, public school, and public hospital using the following code chunks and minimizing the results from solving [Vincenty's Inverse Problem](https://en.wikipedia.org/wiki/Vincenty%27s_formulae):
 
-More specificaly, minimizing the results for s where:
-
-$\begin{aligned}
+More specifically, minimizing the results for s where: $\begin{aligned}
 s = bA(\sigma - \Delta \sigma)
-\end{aligned}$
-
-and s is measured in meters, and accurate to 0.06mm.
+\end{aligned}$, and s is measured in meters, and accurate to 0.06mm.
 
 ```{r, warning = FALSE, results = "hide"}
 # Preparing lat/lon dataframes for function
@@ -164,32 +187,191 @@ redfinDat$ClosestHospital <- DistanceHospitalMatrix$publicHospitalCoordsID
 
 ***
 
-#### Preparing and outputting the models
+### Model preperation and outputs:
 
 ```{r, results = "asis"}
-mod1 <- lm(log(PRICE) ~ BEDS + BATHS + PROPERTY.TYPE + SQUARE.FEET + LOT.SIZE + YEAR.BUILT, data = redfinDat) # base model w/out the effects of distance to nearest public good
-mod2 <- lm(log(PRICE) ~ BEDS + BATHS + PROPERTY.TYPE + SQUARE.FEET + LOT.SIZE + YEAR.BUILT + distanceToPark + distanceToSchool + distanceToHospital, data = redfinDat) # base model including public goods (excluding light rail station, allows for asessing if inclusion of light station is significant)
-mod3 <- lm(log(PRICE) ~ BEDS + BATHS + PROPERTY.TYPE + SQUARE.FEET + LOT.SIZE + YEAR.BUILT + distanceToPark + distanceToSchool + distanceToHospital + distanceToLink, data = redfinDat) # model including distance to light rail station
+
+mod1 <- lm(log(PRICE) ~ BEDS + BATHS + PROPERTY.TYPE + SQUARE.FEET + LOT.SIZE + AGE, data = redfinDat) # base model w/out the effects of distance to nearest public good
+mod2 <- lm(log(PRICE) ~ BEDS + BATHS + PROPERTY.TYPE + SQUARE.FEET + LOT.SIZE + AGE + distanceToPark + distanceToSchool + distanceToHospital, data = redfinDat) # base model including public goods (excluding light rail station, allows for asessing if inclusion of light station is significant)
+mod3 <- lm(log(PRICE) ~ BEDS + BATHS + PROPERTY.TYPE + SQUARE.FEET + LOT.SIZE + AGE + distanceToPark + distanceToSchool + distanceToHospital + distanceToLink, data = redfinDat) # model including distance to light rail station
 
 # start creating models with interaction dummies to assess impact of distance thresholds
-redfinDat$inter1 <- ifelse(redfinDat$distanceToLink <= 500, 1, 0) # threshold at 500 meters
+redfinDat$inter1 <- ifelse(redfinDat$distanceToLink <= 2233.452, 1, 0) # threshold at first quartile
+redfinDat$inter2 <- ifelse(redfinDat$distanceToLink <= 4248.672, 1, 0) # threshold at second quartile
+
+redfinDat$inter3 <- ifelse(redfinDat$distanceToLink <= 6535.3, 1, 0) # threshold at third quartile meters
+
+stargazer(redfinDat, median = TRUE, type = "html", digits = 2) # summarize data including interaction dummy variables
+```
+
+```{r}
+cormatrix <- round(cor(redfinDat[sapply(redfinDat, is.numeric)], use = "pairwise.complete.obs"), 2)
+uppercormatrix <- cormatrix
+uppercormatrix[upper.tri(cormatrix)] <- ""
+uppercormatrix <- as.data.frame(uppercormatrix)
+kable(uppercormatrix, "html") %>% 
+  kable_styling("striped") %>% 
+  row_spec(0, font_size = 7) %>% 
+  scroll_box(width = "1000px", height = "800")
+  
+  
+```
+
+```{r, results = "asis"}
 redfinDat$inter1 <- as.factor(redfinDat$inter1)
-mod4 <- lm(log(PRICE) ~ BEDS + BATHS + PROPERTY.TYPE + SQUARE.FEET + LOT.SIZE + YEAR.BUILT + distanceToPark + distanceToSchool + distanceToHospital + distanceToLink + distanceToLink*inter1, data = redfinDat)
+mod4 <- lm(log(PRICE) ~ BEDS + BATHS + PROPERTY.TYPE + SQUARE.FEET + LOT.SIZE + AGE + distanceToPark + distanceToSchool + distanceToHospital + distanceToLink + distanceToLink*inter1, data = redfinDat)
 
-redfinDat$inter2 <- ifelse(redfinDat$distanceToLink <= 1000, 1, 0) # threshold at 1000 meters
+
 redfinDat$inter2 <- as.factor(redfinDat$inter2)
-mod5 <- lm(log(PRICE) ~ BEDS + BATHS + PROPERTY.TYPE + SQUARE.FEET + LOT.SIZE + YEAR.BUILT + distanceToPark + distanceToSchool + distanceToHospital + distanceToLink + distanceToLink*inter2, data = redfinDat)
+mod5 <- lm(log(PRICE) ~ BEDS + BATHS + PROPERTY.TYPE + SQUARE.FEET + LOT.SIZE + AGE + distanceToPark + distanceToSchool + distanceToHospital + distanceToLink + distanceToLink*inter2, data = redfinDat)
 
-redfinDat$inter3 <- ifelse(redfinDat$distanceToLink <= 1500, 1, 0) # threshold at 1500 meters
+
 redfinDat$inter3 <- as.factor(redfinDat$inter3)
-mod6 <- lm(log(PRICE) ~ BEDS + BATHS + PROPERTY.TYPE + SQUARE.FEET + LOT.SIZE + YEAR.BUILT + distanceToPark + distanceToSchool + distanceToHospital + distanceToLink + distanceToLink*inter3, data = redfinDat)
-
-stargazer(redfinDat, type = "html")
+mod6 <- lm(log(PRICE) ~ BEDS + BATHS + PROPERTY.TYPE + SQUARE.FEET + LOT.SIZE + AGE + distanceToPark + distanceToSchool + distanceToHospital + distanceToLink + distanceToLink*inter3 , data = redfinDat)
 
 stargazer(mod1,mod2,mod3,mod4,mod5,mod6, type = "html",
-          covariate.labels = c("No. of bedrooms", "No. of bathrooms", "Mobile/Manufactured Home", "Multi-Family(2-4 unit)", "Multi-Family(5+ unit)", "Other Property Type", "Single Family, Residential", "Townhouse", "Square Feet of property", "Lot Size (sqr feet)", "Year built", "Distance to nearest public green space (meters)", "Distance to nearest school (meters)", "Distance to nearest hospital (meters", "distance to nearest station (meters)", "D500", "Distance to nearest station interacted with D500", "D1000", "Distance to nearest station interacted with D1000", "D1500", "Distance to nearest station interacted with D1500"),
+          covariate.labels = c("No. of bedrooms", "No. of bathrooms","Multi-Family (5+ Unit)","Single Family Residential", "Townhouse", "Square Feet of property", "Lot Size (sqr feet)", "Age of Property", "Distance to nearest public green space (meters)", "Distance to nearest school (meters)", "Distance to nearest hospital (meters", "distance to nearest station (meters)", "D2233.5", "Distance to nearest station interacted with D2233.5", "D4348.7", "Distance to nearest station interacted with D4348.7", "D6353.3", "Distance to nearest station interacted with D6353.3"),
           column.labels = c("Model 1", "Model 2", "Model 3", "Model 4", "Model 5", "Model 6"),
           dep.var.labels.include = FALSE,
           dep.var.caption = "log(Price)")
 ```
+
+***
+
+### Examining the Residual Plots and Conducting BP Tests 
+
+More specifically, assessing constant variance for the base model (model 1), the model introducing accessibility to public goods (model 2), and the finalized model (model 5)
+
+**Model 1**
+
+$\begin{aligned}
+log(Price) =-0.006(Bedrooms) + 0.24(Bathrooms) + (Home Type) + 0.0002 (Square Feet) + (Lot Size) + 0.001 (Age)
+\end{aligned}$
+
+Fitting residuals for model 1:
+
+```{r}
+plot(fitted(mod1), resid(mod1))
+```
+
+There does not seem to be a pattern in the residual plot for model 1. Let's confirm that there is no heteroscedasticity in this model by conducting a bp test.
+
+bp test:
+H0: the residuals in model 1 are homoscedastic
+HA: the residuals in model 1 are heteroscedastic
+
+```{r}
+bptest(mod1)
+```
+
+The p-value is pretty high--not significant. Therefore, we fail to reject the null hypothesis and conclude that the error terms are homoskedastic.
+
+**Model 2**
+
+$\begin{aligned}
+log(Price) &= 0.006(Bedrooms) + 0.216(Bathrooms) + (Home Type) + 0.0002 (Square Feet) + (Lot Size) \\
+log(Price &= + 0.001 (Age) - 0.0004(Green Space) + 0.0001(School) - 0.00001(Hospital)
+\end{aligned}$
+
+Fitting residuals for model 2:
+
+```{r}
+plot(fitted(mod2),resid(mod2)) 
+```
+
+There does not seem to be a pattern in the residual plot for model 2. Let's confirm that there is no heteroscedasticity in this model by conducting a bp test.
+
+bp test:
+H0: the residuals in model 2 are homoscedastic
+HA: the residuals in model 2 are heteroscedastic
+
+```{r}
+bptest(mod6)
+```
+
+The p-value is pretty high--not significant. Therefore, we fail to reject the null hypothesis and conclude that the error terms are homoskedastic.
+
+**Model 5**
+
+$\begin{aligned}
+log(Price) &= 0.002(Bedrooms) + 0.223(Bathrooms) + (Home Type) + 0.0002 (Square Feet) + (Lot Size) \\
+log(Price) &= ... + 0.001 (Age) - 0.0004(Green Space) + 0.0001(School) - 0.00001(Hospital)...\\
+log(Price) &= ... - 0.00003 (Station) - 0.027(D750) - 0.00004 (D750 * Station)
+\end{aligned}$
+
+Fitting residuals for model 5:
+
+```{r}
+plot(fitted(mod5),resid(mod5)) 
+```
+
+There does not seem to be a pattern in the residual plot for model 6. Let's confirm that there is no heteroscedasticity in this model by conducting a bp test.
+
+bp test:
+H0: the residuals in model 5 are homoscedastic
+HA: the residuals in model 5 are heteroscedastic
+
+```{r}
+bptest(mod5)
+```
+
+The p-value is pretty high--not significant. Therefore, we fail to reject the null hypothesis and conclude that the error terms are homoskedastic
+
+
+***
+
+### Variables and coefficient results:
+
++ The dependent variable is **log(price)** in dollars (not thousands), and each variables is either continuous, or relative to an omitted category. So by taking the coefficient of each variables and multiplying by 100, we can calculate the percent change in the price of the property from increasing one numerical value by 1 unit.
+
++ **Number of bedrooms** represents the number of bedrooms for that property in integer form. The coefficient for most of the models is significant at most levels, but is fairly small and negative, which seems counter-intuitive and could be indicative of the bathroom variable taking on the effects of the bedroom variable as they are both highly correlated. For model 5, the coefficient is -0.34 and not significant at or below the 10% level.
+
++ **Number of bathrooms** represents the number of bedrooms for that property in integer form. The coefficients for this variable are significant at most thresholds, and positive across the models, indicating that as the number of bathrooms increases, the price of the property increases by 13-15% holding all else constant. For model 5 specifically, the constant indicates a 14.6% change per additional bathroom, and is significant at the 1% level.
+
++ **Multi-Family home** represents the style of property that includes 5+ units for multiple family living space. The coefficients for this variable are fairly small and insignificant at all thresholds. For model 5, the coefficient is -0.159 and not significant at or below the 10% level.
+
++ **Single-Family**, Residential represents the style of property that only includes enough space for one family. The coefficients for this variable are significant at all thresholds and are positive for all of the models, indicating that a home with a single-family style increases the price by about 30-40% holding all other variables constant and relative to the multi-family 2-4 unit style. For model 5, the coefficient indicates that Single-Family, residential style homes are priced 32.9% higher than multi-family (2-4) style homes at the 5% level holding all else constant.
+
++ **Townhouse** represents the style of property that includes a factor level for properties listed in the Townhouse category. The coefficients for this variable are significant at all thresholds and are positive for all of the models, indicating that a home with a Townhouse style increases the price by about 40-50% holding all other variables constant and relative to the multi-family 2-4 unit style. For model 5, the coefficient indicates that a Townhouse style home is priced 41.1% higher than a multi-family (2-4) style home at the 5% level, holding all other variables constant.
+
++ The **Square Feet** of Property variable captures the effects of increasing the square feet by one on the price. The coefficient is significant at the 1% level and remains fairly consistent at .03% increase in price per an increase of one square foot holding all other variables constant. This statement holds true for the coefficient in model 5.
+
++ The **Lot Size** (square feet) variable captures the effects of increasing lot size (different from internal property size) by one square foot. The coefficient for this variable is insignificant, and extremely small for each of the models.
+The Age of Property variable is an integer style variable that captures the effects of increasing the age of the house on the price. The coefficient is insignificant at all thresholds. For model 5, this coefficient is reported as 0.001 and is not significant at or below the 10% level.
+
++ **Distance to nearest public green** space captures the effects of increasing the distance to the nearest public green space by 1 meter. The coefficients are significant at all thresholds and are negative for all of the models that include the variable. Increasing the distance by 1 meter is associated with a .03 or 0.04% decrease in the price of the property holding all other variables constant. For model 5, the coefficient indicates a 0.04% decrease in price of the property per additional meter of distance to the nearest public green space holding all other variables constant.
+
++ **Distance to nearest public school** captures the effects of increasing the distance to the nearest public school by 1 meter. The coefficients are insignificant at all thresholds and are positive for most of the models that include the variable. Increasing the distance by 1 meter is associated with a .001% increase in the price of the property holding all other variables constant. For model 5, the coefficient is reported as 0.000003 and is not significant at or below the 10% level.
+
++ **Distance to nearest public hospital** captures the effects of increasing the distance to the nearest public hospital by 1 meter. The coefficients are insignificant at all thresholds and have negligible effect on housing price. For model 5, the coefficient is reported as -0.00001 and is not significant at or below the 10% level
+
++ **Distance to nearest station8** captures the effects of increasing the distance to the nearest light rail station by 1 meter. The coefficients are significant at most thresholds and are negative for models 4 and 5. For model 5 increasing the distance by 1 meter is associated with a .0004% decrease in the price of the property holding all other variables constant (this effect is significant at the 5% level).
+
++ **D2233.5/4348.7/6353.3** and their interactions: Each of these represents an attempt to identify a threshold distance for where the distance to the nearest light rail likely no-longer has an impact on housing price. By selecting a threshold close to 0, we can artificially create a category for property prices that are not affected and are affected by the distance to the light rail. Each of these dummy variables have coefficients that are different from 0 by a large margin, however model 5’s coefficient is the closest to zero while maintaining statistical significance. The coefficient for the interaction is positive, which indicates that a house within 4348.7 meters has a reduced impact of increasing the distance to the nearest station by 1 meter.
+
++ The **adjusted R-squared** for model 5 is 0.747, meaning that, factoring in the number of variables used, the model explains 74.7% of the variation in housing prices.
+
+
+***
+
+### Conclusion:
+
+In conclusion, this model demonstrates that proximity to a light rail station does have an effect on the pricing of homes in the Seattle market. This means that, as new light rail stations are constructed, home owners close-by can expect an increase in the value of their home as a result of the light rail station opening in the long run.
+
+Other opportunities for research include assessing the impact of accessibility to public transportation on commercial real estate in the Seattle area. Researchers interested in this topic should look to analysis composed by Debrezion et. al. Other researchers might be more interested in accessibility to light rail station in conjunction with the macro-economic factors that shape housing prices—for those inquiries we refer to Li et. al.
+
+Furthermore, future researchers may look to focus on other specific categories of public goods. While this model used distance as a proxy for assessing access and impact of public goods, others may be interested in either conducting an index or using financial valuations to assess the value of the public good, and then maximize that value by the distance (to simulate which public good provides the most value per distance traveled). This may have a more significant impact than only utilizing distance as a proxy. Furthermore, investigating this impact can help shape local policy – perhaps increasing the quality of local parks increases home values, and thus homeowners may be interested in voting for such a bill (although further research would be needed to assess the opportunity costs of voting for such a proposition, and assessing its impact on the overall economy). Another area of expansion upon this study would be to gather a more comprehensive property list, as this dataset contained only 211 observations. Alternatively, light rail stations might have a greater impact on apartment prices, which are not included in the property listings that were collected and utilized for this project.
+
+
+***
+
+### Works Cited:
+
+**Agostini, C. A., & Palmucci, G. A. (2008).** The Anticipated Capitalisation Effect of a New Metro Line on Housing Prices. Fiscal Studies, 29(2), 233-256. http://web.a.ebscohost.com.proxy.seattleu.edu/ehost/pdfviewer/pdfviewer?vid=1&sid=07433d5b-2221-4c97-92eb-8e5561d4e7bd%40sessionmgr4009
+
+**Debrezion, G., Pels, E. A., & Rietveld, P. (2007).** The Impact of Railway Stations on Residential and Commercial Property Value: A Meta Analysis. SSRN Electronic Journal, 35(2),161-180. https://link.springer.com/article/10.1007/s11146-007-9032-z
+
+**Hewitt, C., & Hewitt, W. (2012).** The Effect of Proximity to Urban Rail on Housing Prices inOttawa. Journal of Public Transportation, 15(4), 43-65. http://scholarcommons.usf.edu/cgi/viewcontent.cgi?article=1080&context=jpt
+    
+**Li, S., Chen, L., & Zhao, P. (2016).** The impact of metro services on housing prices: a casestudy from Beijing. Sustainability, 8, 380. https://smartech.gatech.edu/bitstream/handle/1853/43479/BinYan_Land+Values+Impacts+of+Subway+Stations.pdf;jsessionid=71FC1FF5925271D11E484D61188E7A3F.smartech?sequence=1
 
